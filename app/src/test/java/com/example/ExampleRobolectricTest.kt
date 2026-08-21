@@ -2,6 +2,7 @@ package com.example
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.ScriptRepository
 import com.example.engine.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -20,6 +21,22 @@ class ExampleRobolectricTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
         assertEquals("Python Runner", appName)
+    }
+
+    @Test
+    fun `test all default templates can parse successfully`() {
+        val templates = ScriptRepository.getDefaultTemplates()
+        for (template in templates) {
+            try {
+                val lexer = PyLexer(template.code)
+                val tokens = lexer.tokenize()
+                val parser = PyParser(tokens)
+                val stmts = parser.parse()
+                assertTrue("Template '${template.title}' parsed statements", stmts.isNotEmpty())
+            } catch (e: Exception) {
+                throw AssertionError("Failed to parse template '${template.title}': ${e.message}", e)
+            }
+        }
     }
 
     @Test
@@ -54,6 +71,29 @@ class ExampleRobolectricTest {
         assertEquals(2, stdoutList.size)
         assertEquals("Fibonacci 7 is 13", stdoutList[0])
         assertTrue(stdoutList[1].contains("3, 5, 7, 9, 11, 13"))
+    }
+
+    @Test
+    fun `test python interpreter text adventure execution`() = runBlocking {
+        val stdoutList = mutableListOf<String>()
+        val inputs = mutableListOf("Arthur", "2") // Choose door 2
+        val ctx = PyContext(
+            onStdout = { stdoutList.add(it) },
+            onStderr = { err -> throw RuntimeException("Stderr: $err") },
+            onInputRequest = { inputs.removeAt(0) }
+        )
+
+        val template = ScriptRepository.getDefaultTemplates().find { it.title.contains("Text-Adventure") }!!
+        val lexer = PyLexer(template.code)
+        val tokens = lexer.tokenize()
+        val parser = PyParser(tokens)
+        val stmts = parser.parse()
+
+        val interpreter = PyInterpreter(ctx)
+        interpreter.execute(stmts)
+
+        assertTrue(stdoutList.any { it.contains("Arthur") })
+        assertTrue(stdoutList.any { it.contains("Schatzkiste") || it.contains("Magisches Schwert") })
     }
 
     @Test

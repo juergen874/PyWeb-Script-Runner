@@ -109,7 +109,7 @@ class PyInterpreter(val ctx: PyContext) {
                 for (item in items) {
                     checkCancelled()
                     yield()
-                    ctx.setVariable(stmt.variable, item)
+                    assignVariables(stmt.variables, item)
                     val flow = executeBlock(stmt.body)
                     if (flow is FlowControl.Break) {
                         wasBroken = true
@@ -417,7 +417,7 @@ class PyInterpreter(val ctx: PyContext) {
 
                 ctx.pushScope()
                 for (item in elements) {
-                    ctx.setVariable(expr.variable, item)
+                    assignVariables(expr.variables, item)
                     val keep = expr.condition == null || evaluate(expr.condition).isTruthy()
                     if (keep) {
                         result.add(evaluate(expr.expr))
@@ -434,7 +434,7 @@ class PyInterpreter(val ctx: PyContext) {
 
                 ctx.pushScope()
                 for (item in elements) {
-                    ctx.setVariable(expr.variable, item)
+                    assignVariables(expr.variables, item)
                     val keep = expr.condition == null || evaluate(expr.condition).isTruthy()
                     if (keep) {
                         val k = evaluate(expr.keyExpr)
@@ -444,6 +444,25 @@ class PyInterpreter(val ctx: PyContext) {
                 }
                 ctx.popScope()
                 PyValue.DictVal(result)
+            }
+        }
+    }
+
+    private fun assignVariables(variables: List<String>, item: PyValue) {
+        if (variables.size == 1) {
+            ctx.setVariable(variables[0], item)
+        } else {
+            val unpacked = when (item) {
+                is PyValue.ListVal -> item.elements
+                is PyValue.TupleVal -> item.elements
+                else -> listOf(item)
+            }
+            for (i in variables.indices) {
+                if (i < unpacked.size) {
+                    ctx.setVariable(variables[i], unpacked[i])
+                } else {
+                    ctx.setVariable(variables[i], PyValue.NoneVal)
+                }
             }
         }
     }

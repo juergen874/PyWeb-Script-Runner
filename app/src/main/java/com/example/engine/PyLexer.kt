@@ -52,8 +52,6 @@ class PyLexer(private val source: String) {
         }
 
         while (index < source.length) {
-            val char = source[index]
-
             // Handle start of line indentation
             if (atLineStart && bracketNesting == 0) {
                 var currentIndent = 0
@@ -86,6 +84,9 @@ class PyLexer(private val source: String) {
                     }
                 }
             }
+
+            if (index >= source.length) break
+            val char = source[index]
 
             // Skip inline whitespace
             if (char == ' ' || char == '\t') {

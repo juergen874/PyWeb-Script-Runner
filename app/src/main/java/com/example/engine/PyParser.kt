@@ -175,7 +175,10 @@ class PyParser(private val tokens: List<Token>) {
 
     private fun parseFor(): Statement {
         advance() // for
-        val variable = consume(TokenType.IDENTIFIER, "Expected loop variable name").value
+        val variables = mutableListOf<String>()
+        do {
+            variables.add(consume(TokenType.IDENTIFIER, "Expected loop variable name").value)
+        } while (match(TokenType.COMMA))
         consume(TokenType.IN, "Expected 'in' after loop variable")
         val iterable = parseExpression()
         consume(TokenType.COLON, "Expected ':' after for statement")
@@ -185,7 +188,7 @@ class PyParser(private val tokens: List<Token>) {
             consume(TokenType.COLON, "Expected ':' after else")
             elseBranch = parseBlock()
         }
-        return Statement.ForStmt(variable, iterable, body, elseBranch)
+        return Statement.ForStmt(variables, iterable, body, elseBranch)
     }
 
     private fun parseReturn(): Statement {
@@ -627,8 +630,11 @@ class PyParser(private val tokens: List<Token>) {
             }
             val firstExpr = parseExpression()
             if (match(TokenType.FOR)) {
-                // List comprehension: [expr for x in iter if cond]
-                val varName = consume(TokenType.IDENTIFIER, "Expected variable name in comprehension").value
+                // List comprehension: [expr for x in iter if cond] or [expr for k, v in iter if cond]
+                val variables = mutableListOf<String>()
+                do {
+                    variables.add(consume(TokenType.IDENTIFIER, "Expected variable name in comprehension").value)
+                } while (match(TokenType.COMMA))
                 consume(TokenType.IN, "Expected 'in' in comprehension")
                 val iter = parseLogicalOr()
                 var cond: Expression? = null
@@ -636,7 +642,7 @@ class PyParser(private val tokens: List<Token>) {
                     cond = parseLogicalOr()
                 }
                 consume(TokenType.RBRACKET, "Expected ']' after list comprehension")
-                return Expression.ListComprehension(firstExpr, varName, iter, cond)
+                return Expression.ListComprehension(firstExpr, variables, iter, cond)
             }
 
             val items = mutableListOf(firstExpr)
@@ -658,7 +664,10 @@ class PyParser(private val tokens: List<Token>) {
                 val firstVal = parseExpression()
                 if (match(TokenType.FOR)) {
                     // Dict comprehension
-                    val varName = consume(TokenType.IDENTIFIER, "Expected variable name in dict comprehension").value
+                    val variables = mutableListOf<String>()
+                    do {
+                        variables.add(consume(TokenType.IDENTIFIER, "Expected variable name in dict comprehension").value)
+                    } while (match(TokenType.COMMA))
                     consume(TokenType.IN, "Expected 'in' in dict comprehension")
                     val iter = parseLogicalOr()
                     var cond: Expression? = null
@@ -666,7 +675,7 @@ class PyParser(private val tokens: List<Token>) {
                         cond = parseLogicalOr()
                     }
                     consume(TokenType.RBRACE, "Expected '}' after dict comprehension")
-                    return Expression.DictComprehension(firstKey, firstVal, varName, iter, cond)
+                    return Expression.DictComprehension(firstKey, firstVal, variables, iter, cond)
                 }
 
                 val entries = mutableListOf(Pair(firstKey, firstVal))

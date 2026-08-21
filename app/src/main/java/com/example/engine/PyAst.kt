@@ -16,8 +16,8 @@ sealed class Expression {
     data class Ternary(val condition: Expression, val trueExpr: Expression, val falseExpr: Expression) : Expression()
     data class Lambda(val params: List<String>, val body: Expression) : Expression()
     data class FormattedString(val parts: List<Expression>) : Expression()
-    data class ListComprehension(val expr: Expression, val variable: String, val iterable: Expression, val condition: Expression? = null) : Expression()
-    data class DictComprehension(val keyExpr: Expression, val valExpr: Expression, val variable: String, val iterable: Expression, val condition: Expression? = null) : Expression()
+    data class ListComprehension(val expr: Expression, val variables: List<String>, val iterable: Expression, val condition: Expression? = null) : Expression()
+    data class DictComprehension(val keyExpr: Expression, val valExpr: Expression, val variables: List<String>, val iterable: Expression, val condition: Expression? = null) : Expression()
 }
 
 enum class BinaryOperator {
@@ -37,7 +37,7 @@ sealed class Statement {
     data class ExprStmt(val expr: Expression) : Statement()
     data class IfStmt(val branches: List<Pair<Expression, List<Statement>>>, val elseBranch: List<Statement>? = null) : Statement()
     data class WhileStmt(val condition: Expression, val body: List<Statement>, val elseBranch: List<Statement>? = null) : Statement()
-    data class ForStmt(val variable: String, val iterable: Expression, val body: List<Statement>, val elseBranch: List<Statement>? = null) : Statement()
+    data class ForStmt(val variables: List<String>, val iterable: Expression, val body: List<Statement>, val elseBranch: List<Statement>? = null) : Statement()
     data class DefStmt(
         val name: String,
         val params: List<String>,
