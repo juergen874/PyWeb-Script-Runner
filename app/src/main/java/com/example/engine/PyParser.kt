@@ -720,10 +720,16 @@ class PyParser(private val tokens: List<Token>) {
                     i++
                 }
                 if (i < raw.length && raw[i] == '}') i++
-                val innerLexer = PyLexer(exprCode.toString())
-                val innerTokens = innerLexer.tokenize()
-                val innerParser = PyParser(innerTokens)
-                parts.add(innerParser.parseExpression())
+                
+                try {
+                    val innerLexer = PyLexer(exprCode.toString())
+                    val innerTokens = innerLexer.tokenize()
+                    val innerParser = PyParser(innerTokens)
+                    parts.add(innerParser.parseExpression())
+                } catch (e: Exception) {
+                    // Fallback to literal text if not a valid Python expression (e.g. CSS styles or raw text)
+                    parts.add(Expression.Literal(PyValue.StringVal("{" + exprCode.toString() + "}")))
+                }
             } else if (raw[i] == '{' && i + 1 < raw.length && raw[i + 1] == '{') {
                 sb.append('{')
                 i += 2

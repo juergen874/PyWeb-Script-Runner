@@ -82,7 +82,7 @@ fun MainScreen(
                                     AppTab.TERMINAL -> "Terminal & REPL"
                                     AppTab.WEB_UI -> "Localhost Web UI"
                                     AppTab.PACKAGES -> "Pip & Pakete"
-                                    AppTab.SCRIPTS -> "Vorlagen & Skripte"
+                                    AppTab.SCRIPTS -> "Dateimanager & Skripte"
                                 },
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 maxLines = 1
@@ -216,8 +216,8 @@ fun MainScreen(
                 NavigationBarItem(
                     selected = uiState.currentTab == AppTab.SCRIPTS,
                     onClick = { viewModel.selectTab(AppTab.SCRIPTS) },
-                    icon = { Icon(Icons.Default.FolderOpen, contentDescription = "Skripte") },
-                    label = { Text("Skripte") },
+                    icon = { Icon(Icons.Default.FolderOpen, contentDescription = "Dateimanager") },
+                    label = { Text("Dateien") },
                     modifier = Modifier.testTag("nav_scripts")
                 )
             }
@@ -275,14 +275,7 @@ fun MainScreen(
                 AppTab.SCRIPTS -> {
                     ScriptManagerView(
                         uiState = uiState,
-                        onLoadScript = { viewModel.loadScript(it) },
-                        onRunScriptDirectly = { script ->
-                            viewModel.loadScript(script)
-                            viewModel.runScript()
-                        },
-                        onDeleteScript = { viewModel.deleteScript(it) },
-                        onToggleFavorite = { viewModel.toggleFavorite(it) },
-                        onNewScript = { viewModel.createNewScript() }
+                        viewModel = viewModel
                     )
                 }
             }

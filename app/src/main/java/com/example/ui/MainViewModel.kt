@@ -1,6 +1,9 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
@@ -14,6 +17,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.coroutines.Continuation
@@ -485,6 +492,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun runScriptDirectly(script: ScriptEntity) {
+        _uiState.update {
+            it.copy(
+                scriptId = script.id,
+                scriptTitle = script.title,
+                scriptCode = script.code,
+                scriptCategory = script.category
+            )
+        }
+        runScript()
+    }
+
     fun createNewScript() {
         val newCode = """# Neues Python Skript
 import math
@@ -557,6 +576,189 @@ print("Hallo aus PyRunner!")
     fun toggleFavorite(script: ScriptEntity) {
         viewModelScope.launch {
             repository.update(script.copy(isFavorite = !script.isFavorite))
+        }
+    }
+
+    fun duplicateScript(script: ScriptEntity) {
+        viewModelScope.launch {
+            val copyTitle = "${script.title} (Kopie)"
+            val newId = repository.insert(
+                ScriptEntity(
+                    title = copyTitle,
+                    description = "Dupliziert von ${script.title}",
+                    code = script.code,
+                    category = script.category
+                )
+            )
+            _uiState.update {
+                it.copy(
+                    scriptId = newId,
+                    scriptTitle = copyTitle,
+                    scriptCode = script.code,
+                    scriptCategory = script.category,
+                    snackbarMessage = "Skript dupliziert: '$copyTitle'"
+                )
+            }
+        }
+    }
+
+    fun importScriptFromUri(uri: Uri, context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                var fileName = "Importiertes Skript.py"
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex != -1 && cursor.moveToFirst()) {
+                        val name = cursor.getString(nameIndex)
+                        if (!name.isNullOrBlank()) fileName = name
+                    }
+                }
+
+                val content = context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    BufferedReader(InputStreamReader(inputStream)).readText()
+                } ?: ""
+
+                if (content.isBlank()) {
+                    withContext(Dispatchers.Main) {
+                        _uiState.update { it.copy(snackbarMessage = "Datei ist leer!") }
+                    }
+                    return@launch
+                }
+
+                val cleanTitle = fileName.removeSuffix(".py").removeSuffix(".txt")
+                val isWeb = content.contains("web.") || content.contains("html")
+                val category = if (isWeb) "Web UI" else "Importiert"
+
+                val newId = repository.insert(
+                    ScriptEntity(
+                        title = cleanTitle,
+                        description = "Importiert aus $fileName",
+                        code = content,
+                        category = category
+                    )
+                )
+
+                withContext(Dispatchers.Main) {
+                    _uiState.update {
+                        it.copy(
+                            scriptId = newId,
+                            scriptTitle = cleanTitle,
+                            scriptCode = content,
+                            scriptCategory = category,
+                            currentTab = AppTab.EDITOR,
+                            snackbarMessage = "✔ Datei '$fileName' erfolgreich geladen!"
+                        )
+                    }
+                    addTerminalLine("📂 Skript '$fileName' in Editor geladen.\n", TerminalLineType.SYSTEM)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _uiState.update { it.copy(snackbarMessage = "Fehler beim Laden: ${e.localizedMessage}") }
+                    addTerminalLine("❌ Import-Fehler: ${e.message}\n", TerminalLineType.STDERR)
+                }
+            }
+        }
+    }
+
+    fun importScriptFromText(title: String, code: String, category: String = "Eigene Skripte") {
+        viewModelScope.launch {
+            val newId = repository.insert(
+                ScriptEntity(
+                    title = title,
+                    description = "Erstellt am ${SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.GERMAN).format(Date())}",
+                    code = code,
+                    category = category
+                )
+            )
+            _uiState.update {
+                it.copy(
+                    scriptId = newId,
+                    scriptTitle = title,
+                    scriptCode = code,
+                    scriptCategory = category,
+                    currentTab = AppTab.EDITOR,
+                    snackbarMessage = "✔ '$title' importiert"
+                )
+            }
+        }
+    }
+
+    fun importScriptFromUrl(urlString: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val url = URL(urlString.trim())
+                val conn = url.openConnection() as HttpURLConnection
+                conn.connectTimeout = 8000
+                conn.readTimeout = 8000
+                conn.requestMethod = "GET"
+
+                if (conn.responseCode in 200..299) {
+                    val code = conn.inputStream.bufferedReader().use { it.readText() }
+                    val pathSegments = url.path.split("/")
+                    val rawName = pathSegments.lastOrNull()?.ifBlank { null } ?: "Online_Skript.py"
+                    val title = rawName.removeSuffix(".py").removeSuffix(".txt")
+
+                    val newId = repository.insert(
+                        ScriptEntity(
+                            title = title,
+                            description = "Geladen von: $urlString",
+                            code = code,
+                            category = "Online"
+                        )
+                    )
+
+                    withContext(Dispatchers.Main) {
+                        _uiState.update {
+                            it.copy(
+                                scriptId = newId,
+                                scriptTitle = title,
+                                scriptCode = code,
+                                scriptCategory = "Online",
+                                currentTab = AppTab.EDITOR,
+                                snackbarMessage = "✔ '$title' von URL heruntergeladen!"
+                            )
+                        }
+                        addTerminalLine("🌐 Skript von $urlString geladen.\n", TerminalLineType.SYSTEM)
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        _uiState.update { it.copy(snackbarMessage = "Download fehlgeschlagen (HTTP ${conn.responseCode})") }
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _uiState.update { it.copy(snackbarMessage = "URL Fehler: ${e.localizedMessage}") }
+                }
+            }
+        }
+    }
+
+    fun exportScriptToUri(uri: Uri, context: Context, code: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { outputStream ->
+                    outputStream.write(code.toByteArray(Charsets.UTF_8))
+                    outputStream.flush()
+                }
+                withContext(Dispatchers.Main) {
+                    _uiState.update { it.copy(snackbarMessage = "✔ Skript erfolgreich exportiert!") }
+                    addTerminalLine("💾 Skript erfolgreich exportiert.\n", TerminalLineType.SYSTEM)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _uiState.update { it.copy(snackbarMessage = "Export-Fehler: ${e.localizedMessage}") }
+                }
+            }
+        }
+    }
+
+    fun resetOrUpdateTemplates() {
+        viewModelScope.launch {
+            repository.resetOrUpdateDefaultTemplates()
+            val list = repository.allScripts
+            _uiState.update {
+                it.copy(snackbarMessage = "✔ Alle Standard-Vorlagen wurden aktualisiert!")
+            }
         }
     }
 

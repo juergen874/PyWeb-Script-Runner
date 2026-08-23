@@ -17,6 +17,29 @@ class ScriptRepository(private val scriptDao: ScriptDao) {
     suspend fun ensureDefaultTemplates() {
         if (scriptDao.getCount() == 0) {
             scriptDao.insertAll(getDefaultTemplates())
+        } else {
+            // Check if Deye script exists with old syntax and update it
+            val existing = scriptDao.getAllScriptsList()
+            val deyeDefault = getDefaultTemplates().firstOrNull { it.title.contains("Deye", ignoreCase = true) }
+            if (deyeDefault != null) {
+                val existingDeye = existing.firstOrNull { it.title.contains("Deye", ignoreCase = true) }
+                if (existingDeye != null && existingDeye.code.contains("f\"\"\"")) {
+                    scriptDao.updateScript(existingDeye.copy(code = deyeDefault.code))
+                }
+            }
+        }
+    }
+
+    suspend fun resetOrUpdateDefaultTemplates() {
+        val existing = scriptDao.getAllScriptsList()
+        val templates = getDefaultTemplates()
+        for (tmpl in templates) {
+            val matched = existing.firstOrNull { it.title.equals(tmpl.title, ignoreCase = true) }
+            if (matched != null) {
+                scriptDao.updateScript(matched.copy(code = tmpl.code, description = tmpl.description, category = tmpl.category))
+            } else {
+                scriptDao.insertScript(tmpl)
+            }
         }
     }
 
@@ -444,7 +467,7 @@ print(f"✔ Gesamtertrag: {data['total_yield']} kWh")
 print(f"✔ Inverter Temperatur: {data['temp']} °C")
 
 # Starte Live Web UI Dashboard
-html_dashboard = f$tq<!DOCTYPE html>
+html_dashboard = $tq<!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
@@ -469,35 +492,35 @@ html_dashboard = f$tq<!DOCTYPE html>
 <body>
     <div class="header">
         <div class="title">☀️ Deye Solar Reader</div>
-        <div class="status-pill">● {data['status']}</div>
+        <div class="status-pill">● __STATUS__</div>
     </div>
 
     <div class="hero-power">
         <div class="hero-label">Aktuelle AC-Leistung</div>
-        <div class="hero-val">{data['ac_power']} <span style="font-size:24px; font-weight:600;">Watt</span></div>
-        <div style="font-size:13px; color:#bae6fd;">Logger S/N: {LOGGER_SERIAL} | IP: {INVERTER_IP}</div>
+        <div class="hero-val">__AC_POWER__ <span style="font-size:24px; font-weight:600;">Watt</span></div>
+        <div style="font-size:13px; color:#bae6fd;">Logger S/N: __SERIAL__ | IP: __IP__</div>
     </div>
 
     <div class="grid">
         <div class="card">
             <div class="lbl">Tagesertrag</div>
-            <div class="num" style="color:#38bdf8;">{data['daily_yield']} <span style="font-size:14px;">kWh</span></div>
+            <div class="num" style="color:#38bdf8;">__DAILY__ <span style="font-size:14px;">kWh</span></div>
         </div>
         <div class="card">
             <div class="lbl">Gesamtertrag</div>
-            <div class="num" style="color:#a78bfa;">{data['total_yield']} <span style="font-size:14px;">kWh</span></div>
+            <div class="num" style="color:#a78bfa;">__TOTAL__ <span style="font-size:14px;">kWh</span></div>
         </div>
         <div class="card">
             <div class="lbl">PV1 Eingang</div>
-            <div class="num" style="color:#facc15;">{data['pv1_power']} <span style="font-size:14px;">W</span></div>
+            <div class="num" style="color:#facc15;">__PV1__ <span style="font-size:14px;">W</span></div>
         </div>
         <div class="card">
             <div class="lbl">Netzspannung</div>
-            <div class="num">{data['ac_volt']} <span style="font-size:14px;">V</span></div>
+            <div class="num">__VOLT__ <span style="font-size:14px;">V</span></div>
         </div>
         <div class="card">
             <div class="lbl">Temperatur</div>
-            <div class="num" style="color:#fb7185;">{data['temp']} <span style="font-size:14px;">°C</span></div>
+            <div class="num" style="color:#fb7185;">__TEMP__ <span style="font-size:14px;">°C</span></div>
         </div>
     </div>
 
@@ -506,6 +529,16 @@ html_dashboard = f$tq<!DOCTYPE html>
     </div>
 </body>
 </html>$tq
+
+html_dashboard = html_dashboard.replace("__STATUS__", str(data["status"]))
+html_dashboard = html_dashboard.replace("__AC_POWER__", str(data["ac_power"]))
+html_dashboard = html_dashboard.replace("__SERIAL__", str(LOGGER_SERIAL))
+html_dashboard = html_dashboard.replace("__IP__", str(INVERTER_IP))
+html_dashboard = html_dashboard.replace("__DAILY__", str(data["daily_yield"]))
+html_dashboard = html_dashboard.replace("__TOTAL__", str(data["total_yield"]))
+html_dashboard = html_dashboard.replace("__PV1__", str(data["pv1_power"]))
+html_dashboard = html_dashboard.replace("__VOLT__", str(data["ac_volt"]))
+html_dashboard = html_dashboard.replace("__TEMP__", str(data["temp"]))
 
 web.serve_html(html_dashboard, 8080)
 print("🚀 Live Dashboard gestartet auf http://127.0.0.1:8080 (Tab: Web UI)")

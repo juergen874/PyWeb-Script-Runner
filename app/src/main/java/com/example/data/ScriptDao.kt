@@ -13,6 +13,9 @@ interface ScriptDao {
     @Query("SELECT * FROM python_scripts ORDER BY updatedAt DESC")
     fun getAllScripts(): Flow<List<ScriptEntity>>
 
+    @Query("SELECT * FROM python_scripts")
+    suspend fun getAllScriptsList(): List<ScriptEntity>
+
     @Query("SELECT * FROM python_scripts WHERE id = :id")
     suspend fun getScriptById(id: Long): ScriptEntity?
 
