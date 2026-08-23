@@ -477,6 +477,12 @@ class PyInterpreter(val ctx: PyContext) {
                     PyValue.FloatVal(a + b)
                 }
                 left is PyValue.StringVal && right is PyValue.StringVal -> PyValue.StringVal(left.value + right.value)
+                left is PyValue.BytesVal && right is PyValue.BytesVal -> {
+                    val combined = ByteArray(left.data.size + right.data.size)
+                    System.arraycopy(left.data, 0, combined, 0, left.data.size)
+                    System.arraycopy(right.data, 0, combined, left.data.size, right.data.size)
+                    PyValue.BytesVal(combined)
+                }
                 left is PyValue.ListVal && right is PyValue.ListVal -> {
                     val combined = mutableListOf<PyValue>()
                     combined.addAll(left.elements)
@@ -685,6 +691,13 @@ class PyInterpreter(val ctx: PyContext) {
                 if (actualIdx in target.value.indices) PyValue.StringVal(target.value[actualIdx].toString())
                 else throw RuntimeException("IndexError: string index out of range")
             }
+            is PyValue.BytesVal -> {
+                val i = (idx as? PyValue.IntVal)?.value?.toInt()
+                    ?: throw RuntimeException("TypeError: bytes indices must be integers")
+                val actualIdx = if (i < 0) target.data.size + i else i
+                if (actualIdx in target.data.indices) PyValue.IntVal((target.data[actualIdx].toInt() and 0xFF).toLong())
+                else throw RuntimeException("IndexError: index out of range")
+            }
             is PyValue.DictVal -> {
                 val key = idx.toDisplayString()
                 target.entries[key] ?: throw RuntimeException("KeyError: '$key'")
@@ -717,6 +730,28 @@ class PyInterpreter(val ctx: PyContext) {
                     }
                 }
                 return PyValue.StringVal(sb.toString())
+            }
+            is PyValue.BytesVal -> {
+                val bytes = target.data
+                val start = (startVal as? PyValue.IntVal)?.value?.toInt() ?: if (step > 0) 0 else bytes.size - 1
+                val stop = (stopVal as? PyValue.IntVal)?.value?.toInt() ?: if (step > 0) bytes.size else -1
+                val result = mutableListOf<Byte>()
+                if (step > 0) {
+                    var i = if (start < 0) (bytes.size + start).coerceAtLeast(0) else start
+                    val actualStop = if (stop < 0) (bytes.size + stop).coerceAtLeast(0) else stop.coerceAtMost(bytes.size)
+                    while (i < actualStop && i in bytes.indices) {
+                        result.add(bytes[i])
+                        i += step
+                    }
+                } else {
+                    var i = if (start < 0) (bytes.size + start) else start.coerceAtMost(bytes.size - 1)
+                    val actualStop = if (stop < 0) (bytes.size + stop) else stop
+                    while (i > actualStop && i in bytes.indices) {
+                        result.add(bytes[i])
+                        i += step
+                    }
+                }
+                return PyValue.BytesVal(result.toByteArray())
             }
             is PyValue.ListVal -> {
                 val list = target.elements
@@ -798,7 +833,29 @@ class PyInterpreter(val ctx: PyContext) {
                         val sub = (args.getOrNull(0) as? PyValue.StringVal)?.value ?: ""
                         PyValue.IntVal(target.value.indexOf(sub).toLong())
                     }
+                    "encode" -> PyValue.BuiltinFuncVal("encode") { args, _, _ ->
+                        val encoding = (args.getOrNull(0) as? PyValue.StringVal)?.value ?: "utf-8"
+                        try {
+                            PyValue.BytesVal(target.value.toByteArray(charset(encoding)))
+                        } catch (e: Exception) {
+                            PyValue.BytesVal(target.value.toByteArray(Charsets.UTF_8))
+                        }
+                    }
                     else -> throw RuntimeException("AttributeError: 'str' object has no attribute '$attr'")
+                }
+            }
+            is PyValue.BytesVal -> {
+                return when (attr) {
+                    "hex" -> PyValue.BuiltinFuncVal("hex") { _, _, _ -> PyValue.StringVal(target.hex()) }
+                    "decode" -> PyValue.BuiltinFuncVal("decode") { args, _, _ ->
+                        val encoding = (args.getOrNull(0) as? PyValue.StringVal)?.value ?: "utf-8"
+                        try {
+                            PyValue.StringVal(String(target.data, charset(encoding)))
+                        } catch (e: Exception) {
+                            PyValue.StringVal(String(target.data, Charsets.UTF_8))
+                        }
+                    }
+                    else -> throw RuntimeException("AttributeError: 'bytes' object has no attribute '$attr'")
                 }
             }
             is PyValue.ListVal -> {

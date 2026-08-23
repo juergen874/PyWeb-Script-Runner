@@ -124,13 +124,18 @@ class PyLexer(private val source: String) {
                 return scanString(char, false)
             }
 
-            // Formatted string or raw string prefix
-            if ((char == 'f' || char == 'F' || char == 'r' || char == 'R') &&
-                (peek(1) == '"' || peek(1) == '\'')
+            // Formatted string, raw string, or bytes string prefix (f, r, b, rb, br)
+            if ((char == 'f' || char == 'F' || char == 'r' || char == 'R' || char == 'b' || char == 'B') &&
+                (peek(1) == '"' || peek(1) == '\'' || ((peek(1) == 'r' || peek(1) == 'b') && (peek(2) == '"' || peek(2) == '\'')))
             ) {
                 val isFString = (char == 'f' || char == 'F')
-                index++
-                column++
+                if ((peek(1) == 'r' || peek(1) == 'b') && (peek(2) == '"' || peek(2) == '\'')) {
+                    index += 2
+                    column += 2
+                } else {
+                    index++
+                    column++
+                }
                 return scanString(source[index], isFString)
             }
 
@@ -223,6 +228,23 @@ class PyLexer(private val source: String) {
                     '\\' -> sb.append('\\')
                     '\'' -> sb.append('\'')
                     '"' -> sb.append('"')
+                    'x' -> {
+                        if (index + 2 < source.length &&
+                            source[index + 1].isDigit() || source[index + 1] in "abcdefABCDEF"
+                        ) {
+                            val hex = "${source[index + 1]}${source[index + 2]}"
+                            try {
+                                val byteVal = hex.toInt(16)
+                                sb.append(byteVal.toChar())
+                                index += 2
+                                column += 2
+                            } catch (e: Exception) {
+                                sb.append("\\x")
+                            }
+                        } else {
+                            sb.append("\\x")
+                        }
+                    }
                     else -> {
                         sb.append('\\')
                         sb.append(source[index])

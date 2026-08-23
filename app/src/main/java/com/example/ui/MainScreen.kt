@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.components.CodeEditorView
+import com.example.ui.components.PipManagerView
 import com.example.ui.components.ScriptManagerView
 import com.example.ui.components.TerminalView
 import com.example.ui.components.WebPreviewView
@@ -80,6 +81,7 @@ fun MainScreen(
                                     AppTab.EDITOR -> "Editor • ${uiState.scriptTitle}"
                                     AppTab.TERMINAL -> "Terminal & REPL"
                                     AppTab.WEB_UI -> "Localhost Web UI"
+                                    AppTab.PACKAGES -> "Pip & Pakete"
                                     AppTab.SCRIPTS -> "Vorlagen & Skripte"
                                 },
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
@@ -194,6 +196,24 @@ fun MainScreen(
                 )
 
                 NavigationBarItem(
+                    selected = uiState.currentTab == AppTab.PACKAGES,
+                    onClick = { viewModel.selectTab(AppTab.PACKAGES) },
+                    icon = {
+                        BadgedBox(
+                            badge = {
+                                if (uiState.isInstallingPip) {
+                                    Badge(containerColor = TermYellow) { Text("…") }
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Extension, contentDescription = "Pip Pakete")
+                        }
+                    },
+                    label = { Text("Pip") },
+                    modifier = Modifier.testTag("nav_packages")
+                )
+
+                NavigationBarItem(
                     selected = uiState.currentTab == AppTab.SCRIPTS,
                     onClick = { viewModel.selectTab(AppTab.SCRIPTS) },
                     icon = { Icon(Icons.Default.FolderOpen, contentDescription = "Skripte") },
@@ -242,6 +262,13 @@ fun MainScreen(
                     WebPreviewView(
                         uiState = uiState,
                         onRefresh = { viewModel.refreshWebPreview() }
+                    )
+                }
+
+                AppTab.PACKAGES -> {
+                    PipManagerView(
+                        viewModel = viewModel,
+                        uiState = uiState
                     )
                 }
 

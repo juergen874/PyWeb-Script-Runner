@@ -21,7 +21,11 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
 enum class AppTab {
-    EDITOR, TERMINAL, WEB_UI, SCRIPTS
+    EDITOR, TERMINAL, WEB_UI, PACKAGES, SCRIPTS
+}
+
+enum class EngineMode {
+    AUTO, PYODIDE, NATIVE
 }
 
 enum class TerminalLineType {
@@ -60,13 +64,19 @@ data class UiState(
     val serverState: ServerState = ServerState(),
     val scripts: List<ScriptEntity> = emptyList(),
     val snackbarMessage: String? = null,
-    val isAutoSwitchToWeb: Boolean = true
+    val isAutoSwitchToWeb: Boolean = true,
+    val engineMode: EngineMode = EngineMode.AUTO,
+    val pipSearchQuery: String = "",
+    val isInstallingPip: Boolean = false
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: ScriptRepository
     private val localServer: LocalHttpServer
+    val socketManager: NativeSocketManager = NativeSocketManager()
+    val pyodideEngine: PyodideEngine
+
     private var executionJob: Job? = null
     private var inputContinuation: Continuation<String>? = null
     private var activeContext: PyContext? = null
@@ -77,6 +87,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         val db = AppDatabase.getDatabase(application)
         repository = ScriptRepository(db.scriptDao())
+        pyodideEngine = PyodideEngine(application, viewModelScope, socketManager)
 
         localServer = LocalHttpServer(viewModelScope) { log ->
             _uiState.update { state ->
@@ -261,6 +272,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         executionJob = viewModelScope.launch(Dispatchers.Default) {
             val startTime = System.currentTimeMillis()
+            val mode = _uiState.value.engineMode
+            val usePyodide = when (mode) {
+                EngineMode.PYODIDE -> true
+                EngineMode.NATIVE -> false
+                EngineMode.AUTO -> pyodideEngine.engineState.value == EngineState.READY &&
+                        (codeToRun.contains("micropip") || codeToRun.contains("numpy") || codeToRun.contains("requests") || codeToRun.contains("pandas") || codeToRun.contains("matplotlib"))
+            }
+
+            if (usePyodide && pyodideEngine.engineState.value == EngineState.READY) {
+                withContext(Dispatchers.Main) {
+                    addTerminalLine("🚀 Starte Ausführung in Pyodide CPython 3.11 Engine...\n", TerminalLineType.SYSTEM)
+                }
+                val res = pyodideEngine.executeCode(
+                    code = codeToRun,
+                    onStdout = { text -> addTerminalLine(text, TerminalLineType.STDOUT) },
+                    onStderr = { text -> addTerminalLine(text, TerminalLineType.STDERR) }
+                )
+                val duration = res.durationMs.coerceAtLeast(System.currentTimeMillis() - startTime)
+                withContext(Dispatchers.Main) {
+                    if (res.success) {
+                        if (res.output.isNotEmpty() && res.output != "None") {
+                            addTerminalLine("${res.output}\n", TerminalLineType.REPL_OUT)
+                        }
+                        addTerminalLine("✔ Skript erfolgreich beendet in ${duration}ms (Pyodide)\n", TerminalLineType.SYSTEM)
+                    } else {
+                        addTerminalLine("❌ ${res.error ?: "Fehler bei der Ausführung"}\n", TerminalLineType.STDERR)
+                        addTerminalLine("⏹ Beendet mit Fehler nach ${duration}ms\n", TerminalLineType.SYSTEM)
+                    }
+                    _uiState.update { it.copy(isRunning = false, isWaitingForInput = false) }
+                    if (launchedWebServer && _uiState.value.isAutoSwitchToWeb) {
+                        _uiState.update { it.copy(currentTab = AppTab.WEB_UI) }
+                    }
+                }
+                return@launch
+            }
+
             try {
                 val lexer = PyLexer(codeToRun)
                 val tokens = lexer.tokenize()
@@ -292,6 +339,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     addTerminalLine("❌ Traceback (most recent call last):\n$errMsg", TerminalLineType.STDERR)
                     addTerminalLine("⏹ Beendet mit Fehler nach ${duration}ms\n", TerminalLineType.SYSTEM)
                     _uiState.update { it.copy(isRunning = false, isWaitingForInput = false) }
+                }
+            }
+        }
+    }
+
+    fun setEngineMode(mode: EngineMode) {
+        _uiState.update { it.copy(engineMode = mode) }
+        val modeName = when (mode) {
+            EngineMode.AUTO -> "Auto (Empfohlen)"
+            EngineMode.PYODIDE -> "Pyodide WebAssembly (CPython 3.11 + Pip)"
+            EngineMode.NATIVE -> "Nativ (Integrierte Kotlin VM)"
+        }
+        addTerminalLine("⚙️ Engine-Modus gewechselt zu: $modeName\n", TerminalLineType.SYSTEM)
+    }
+
+    fun setPipSearchQuery(query: String) {
+        _uiState.update { it.copy(pipSearchQuery = query) }
+    }
+
+    fun installPipPackage(packageName: String) {
+        val trimmed = packageName.trim()
+        if (trimmed.isEmpty()) return
+
+        _uiState.update { it.copy(isInstallingPip = true, currentTab = AppTab.PACKAGES) }
+        viewModelScope.launch {
+            addTerminalLine("📦 Starte Pip-Installation von '$trimmed'...\n", TerminalLineType.SYSTEM)
+            val result = pyodideEngine.installPackage(trimmed)
+            withContext(Dispatchers.Main) {
+                if (result.first) {
+                    _uiState.update {
+                        it.copy(
+                            isInstallingPip = false,
+                            snackbarMessage = "✔ $trimmed erfolgreich installiert!"
+                        )
+                    }
+                    addTerminalLine("✔ Pip: ${result.second}\n", TerminalLineType.SYSTEM)
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            isInstallingPip = false,
+                            snackbarMessage = "❌ Fehler: ${result.second}"
+                        )
+                    }
+                    addTerminalLine("❌ Pip Fehler: ${result.second}\n", TerminalLineType.STDERR)
                 }
             }
         }
@@ -329,6 +420,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         _uiState.update { it.copy(replInputText = "") }
         addTerminalLine(">>> $command", TerminalLineType.REPL_IN)
+
+        if (command.startsWith("pip install ")) {
+            val pkg = command.removePrefix("pip install ").trim()
+            installPipPackage(pkg)
+            return
+        } else if (command == "pip list" || command == "pip") {
+            val list = pyodideEngine.installedPackages.value
+            val text = "Installierte Pip-Pakete:\n" + list.joinToString("\n") { " - ${it.name} (${it.version})" }
+            addTerminalLine("$text\n", TerminalLineType.SYSTEM)
+            return
+        }
 
         viewModelScope.launch(Dispatchers.Default) {
             try {

@@ -13,7 +13,8 @@ class PyContext(
     val onStdout: (String) -> Unit,
     val onStderr: (String) -> Unit,
     val onInputRequest: suspend (prompt: String) -> String,
-    val serverCallback: PyServerCallback? = null
+    val serverCallback: PyServerCallback? = null,
+    val socketManager: NativeSocketManager = NativeSocketManager()
 ) {
     val globalScope = mutableMapOf<String, PyValue>()
     val scopes = mutableListOf<MutableMap<String, PyValue>>()

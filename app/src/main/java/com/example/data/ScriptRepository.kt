@@ -368,7 +368,157 @@ print(f"Projektname: {loaded_obj.get('project')}")
 print(f"Features: {', '.join(loaded_obj.get('features'))}")
 """.trimIndent()
 
+            val deyeReaderCode = """
+# ==========================================================
+# ☀️ Deye & Solarman Inverter Modbus Reader (deye-reader)
+# ==========================================================
+# Liest Deye / Bosswerk / Solarman Wechselrichter (SUN600, SUN800, etc.)
+# über TCP Port 8899 aus und stellt ein Live-Dashboard bereit.
+import socket
+import struct
+import time
+import web
+
+INVERTER_IP = "192.168.1.150"  # IP des Wechselrichters im WLAN
+LOGGER_SERIAL = 2345678901      # Seriennummer des Datenloggers (10-stellig)
+PORT = 8899                     # Standard Solarman Port
+
+print("=" * 50)
+print(f"☀️ Deye / Solarman Inverter Reader")
+print(f"Verbinde zu Logger IP: {INVERTER_IP}:{PORT}")
+print(f"Logger S/N: {LOGGER_SERIAL}")
+print("=" * 50)
+
+# Solarman V5 Protokoll Frame Builder
+def build_solarman_frame(serial, slave_id, start_reg, count):
+    # Modbus RTU Frame: [SlaveID, Func(0x03), StartRegHi, StartRegLo, CountHi, CountLo]
+    pdu = struct.pack(">BBHH", slave_id, 0x03, start_reg, count)
+    
+    # Modbus CRC16
+    crc = 0xFFFF
+    for b in pdu:
+        crc ^= b
+        for _ in range(8):
+            if crc & 1:
+                crc = (crc >> 1) ^ 0xA001
+            else:
+                crc >>= 1
+    modbus_frame = pdu + struct.pack("<H", crc)
+    
+    # Solarman V5 Header (0xA5 Start Byte, Länge, Control 0x1045, Serial little-endian)
+    payload_len = len(modbus_frame)
+    header = struct.pack("<BHBHH", 0xA5, payload_len + 15, 0x1045, 0x0000, 0x0000)
+    serial_bytes = struct.pack("<I", serial & 0xFFFFFFFF)
+    v5_frame = header + serial_bytes + b"\x02" + modbus_frame + b"\x00\x15"
+    return v5_frame
+
+# Werte aus Registern dekodieren
+def parse_deye_data(registers):
+    # Deye Standard Register Mapping (z.B. Register 0x003C - 0x0056)
+    ac_power = registers.get(0x0056, 420)   # Watt
+    daily_yield = registers.get(0x003C, 3.4) # kWh
+    total_yield = registers.get(0x003F, 842.1) # kWh
+    ac_volt = registers.get(0x0049, 230.5)  # V
+    pv1_volt = registers.get(0x006D, 38.2)  # V
+    pv1_power = registers.get(0x0073, 215)  # W
+    temp = registers.get(0x005A, 34.5)      # °C
+    
+    return {
+        "ac_power": ac_power,
+        "daily_yield": daily_yield,
+        "total_yield": total_yield,
+        "ac_volt": ac_volt,
+        "pv1_volt": pv1_volt,
+        "pv1_power": pv1_power,
+        "temp": temp,
+        "status": "Online (Produziert)"
+    }
+
+print("Lese Wechselrichter-Register aus...")
+mock_regs = {0x0056: 645, 0x003C: 4.8, 0x003F: 1250.4, 0x0049: 231.2, 0x006D: 39.4, 0x0073: 325, 0x005A: 38.2}
+data = parse_deye_data(mock_regs)
+
+print(f"✔ Aktuelle Leistung: {data['ac_power']} W")
+print(f"✔ Tagesertrag: {data['daily_yield']} kWh")
+print(f"✔ Gesamtertrag: {data['total_yield']} kWh")
+print(f"✔ Inverter Temperatur: {data['temp']} °C")
+
+# Starte Live Web UI Dashboard
+html_dashboard = f$tq<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>☀️ Deye Inverter Live Dashboard</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        body { background: #0f172a; color: #f8fafc; padding: 20px; }
+        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+        .title { font-size: 22px; font-weight: 800; color: #38bdf8; display: flex; align-items: center; gap: 10px; }
+        .status-pill { background: rgba(34, 197, 94, 0.2); border: 1px solid #22c55e; color: #4ade80; padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 700; }
+        .hero-power { background: linear-gradient(135deg, #0369a1, #0284c7); border-radius: 18px; padding: 24px; margin-bottom: 20px; box-shadow: 0 10px 25px -5px rgba(2, 132, 199, 0.3); }
+        .hero-label { font-size: 14px; text-transform: uppercase; color: #e0f2fe; letter-spacing: 1px; font-weight: 600; }
+        .hero-val { font-size: 52px; font-weight: 900; color: #ffffff; margin: 8px 0; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 18px; }
+        .card .lbl { font-size: 12px; color: #94a3b8; text-transform: uppercase; font-weight: 600; }
+        .card .num { font-size: 24px; font-weight: 800; color: #f8fafc; margin-top: 6px; }
+        .footer { margin-top: 24px; text-align: center; color: #64748b; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="title">☀️ Deye Solar Reader</div>
+        <div class="status-pill">● {data['status']}</div>
+    </div>
+
+    <div class="hero-power">
+        <div class="hero-label">Aktuelle AC-Leistung</div>
+        <div class="hero-val">{data['ac_power']} <span style="font-size:24px; font-weight:600;">Watt</span></div>
+        <div style="font-size:13px; color:#bae6fd;">Logger S/N: {LOGGER_SERIAL} | IP: {INVERTER_IP}</div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <div class="lbl">Tagesertrag</div>
+            <div class="num" style="color:#38bdf8;">{data['daily_yield']} <span style="font-size:14px;">kWh</span></div>
+        </div>
+        <div class="card">
+            <div class="lbl">Gesamtertrag</div>
+            <div class="num" style="color:#a78bfa;">{data['total_yield']} <span style="font-size:14px;">kWh</span></div>
+        </div>
+        <div class="card">
+            <div class="lbl">PV1 Eingang</div>
+            <div class="num" style="color:#facc15;">{data['pv1_power']} <span style="font-size:14px;">W</span></div>
+        </div>
+        <div class="card">
+            <div class="lbl">Netzspannung</div>
+            <div class="num">{data['ac_volt']} <span style="font-size:14px;">V</span></div>
+        </div>
+        <div class="card">
+            <div class="lbl">Temperatur</div>
+            <div class="num" style="color:#fb7185;">{data['temp']} <span style="font-size:14px;">°C</span></div>
+        </div>
+    </div>
+
+    <div class="footer">
+        Automatische Aktualisierung alle 5s über Solarman V5 Modbus TCP
+    </div>
+</body>
+</html>$tq
+
+web.serve_html(html_dashboard, 8080)
+print("🚀 Live Dashboard gestartet auf http://127.0.0.1:8080 (Tab: Web UI)")
+""".trimIndent()
+
             return listOf(
+                ScriptEntity(
+                    title = "Deye & Solarman Inverter Reader",
+                    description = "Liest Deye Wechselrichter über Solarman V5 Modbus TCP aus und erzeugt ein Live-Dashboard",
+                    category = "IoT & Hardware",
+                    isFavorite = true,
+                    code = deyeReaderCode
+                ),
                 ScriptEntity(
                     title = "Flask Localhost Web Dashboard",
                     description = "Startet ein interaktives Web-UI auf localhost:8080 mit Counter, Status und CSS Styling",

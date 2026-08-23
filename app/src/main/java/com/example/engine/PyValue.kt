@@ -32,6 +32,32 @@ sealed class PyValue {
         override fun isTruthy(): Boolean = value.isNotEmpty()
     }
 
+    data class BytesVal(val data: ByteArray) : PyValue() {
+        override fun toDisplayString(): String {
+            val sb = StringBuilder("b'")
+            for (b in data) {
+                val unsigned = b.toInt() and 0xFF
+                if (unsigned in 32..126 && unsigned != 39 && unsigned != 92) {
+                    sb.append(unsigned.toChar())
+                } else {
+                    sb.append("\\x%02x".format(unsigned))
+                }
+            }
+            sb.append("'")
+            return sb.toString()
+        }
+        fun hex(): String = data.joinToString("") { "%02x".format(it) }
+        override fun typeName(): String = "bytes"
+        override fun isTruthy(): Boolean = data.isNotEmpty()
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (javaClass != other?.javaClass) return false
+            other as BytesVal
+            return data.contentEquals(other.data)
+        }
+        override fun hashCode(): Int = data.contentHashCode()
+    }
+
     data class BoolVal(val value: Boolean) : PyValue() {
         override fun toDisplayString(): String = if (value) "True" else "False"
         override fun typeName(): String = "bool"

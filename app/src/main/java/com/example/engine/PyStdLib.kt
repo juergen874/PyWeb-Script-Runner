@@ -353,6 +353,7 @@ object PyStdLib {
             PyValue.NoneVal
         }
 
+        // chr & ord
         ctx.globalScope["chr"] = PyValue.BuiltinFuncVal("chr") { args, _, _ ->
             val code = (args.getOrNull(0) as? PyValue.IntVal)?.value?.toInt() ?: 0
             PyValue.StringVal(code.toChar().toString())
@@ -363,6 +364,39 @@ object PyStdLib {
             if (str.isEmpty()) throw RuntimeException("TypeError: ord() expected a character")
             PyValue.IntVal(str[0].code.toLong())
         }
+
+        // bytes(x) & bytearray(x)
+        val bytesFunc = PyValue.BuiltinFuncVal("bytes") { args, _, _ ->
+            if (args.isEmpty()) return@BuiltinFuncVal PyValue.BytesVal(ByteArray(0))
+            when (val item = args[0]) {
+                is PyValue.BytesVal -> item
+                is PyValue.StringVal -> {
+                    val enc = (args.getOrNull(1) as? PyValue.StringVal)?.value ?: "utf-8"
+                    try {
+                        PyValue.BytesVal(item.value.toByteArray(charset(enc)))
+                    } catch (e: Exception) {
+                        PyValue.BytesVal(item.value.toByteArray(Charsets.UTF_8))
+                    }
+                }
+                is PyValue.IntVal -> PyValue.BytesVal(ByteArray(item.value.toInt().coerceAtLeast(0)))
+                is PyValue.ListVal -> {
+                    val arr = ByteArray(item.elements.size)
+                    for (i in item.elements.indices) {
+                        val v = (item.elements[i] as? PyValue.IntVal)?.value?.toInt() ?: 0
+                        arr[i] = (v and 0xFF).toByte()
+                    }
+                    PyValue.BytesVal(arr)
+                }
+                else -> PyValue.BytesVal(ByteArray(0))
+            }
+        }
+        ctx.globalScope["bytes"] = bytesFunc
+        ctx.globalScope["bytearray"] = bytesFunc
+
+        // bytes.fromhex helper
+        val bytesClass = PyValue.ClassVal("bytes")
+        bytesClass.methods["fromhex"] = PyValue.FunctionVal("fromhex", listOf("hex_str"), emptyMap(), null, emptyList(), mutableMapOf())
+        ctx.globalScope["bytes_class"] = bytesClass
 
         // Quick helpers for German users / web runner
         ctx.globalScope["serve_html"] = PyValue.BuiltinFuncVal("serve_html") { args, kwargs, c ->
@@ -586,6 +620,246 @@ object PyStdLib {
                     app
                 }
                 module.members["Flask"] = flaskClass
+            }
+
+            "socket" -> {
+                module.members["AF_INET"] = PyValue.IntVal(2)
+                module.members["SOCK_STREAM"] = PyValue.IntVal(1)
+                module.members["SOCK_DGRAM"] = PyValue.IntVal(2)
+                module.members["SOL_SOCKET"] = PyValue.IntVal(1)
+                module.members["SO_REUSEADDR"] = PyValue.IntVal(2)
+
+                val socketFactory = PyValue.BuiltinFuncVal("socket") { _, _, c ->
+                    val sockObj = PyValue.InstanceVal(PyValue.ClassVal("socket"))
+                    var socketId = ""
+                    var timeoutMs = 5000
+
+                    sockObj.fields["settimeout"] = PyValue.BuiltinFuncVal("settimeout") { tArgs, _, _ ->
+                        val t = (tArgs.getOrNull(0) as? PyValue.FloatVal)?.value
+                            ?: (tArgs.getOrNull(0) as? PyValue.IntVal)?.value?.toDouble() ?: 5.0
+                        timeoutMs = (t * 1000).toInt()
+                        PyValue.NoneVal
+                    }
+
+                    sockObj.fields["connect"] = PyValue.BuiltinFuncVal("connect") { cArgs, _, _ ->
+                        val target = cArgs.getOrNull(0)
+                        val host: String
+                        val port: Int
+                        if (target is PyValue.TupleVal || target is PyValue.ListVal) {
+                            val items = if (target is PyValue.TupleVal) target.elements else (target as PyValue.ListVal).elements
+                            host = (items.getOrNull(0) as? PyValue.StringVal)?.value ?: "127.0.0.1"
+                            port = (items.getOrNull(1) as? PyValue.IntVal)?.value?.toInt() ?: 80
+                        } else {
+                            host = (target as? PyValue.StringVal)?.value ?: "127.0.0.1"
+                            port = (cArgs.getOrNull(1) as? PyValue.IntVal)?.value?.toInt() ?: 80
+                        }
+
+                        val result = c.socketManager.openSocket(host, port, timeoutMs)
+                        if (result.isSuccess) {
+                            socketId = result.getOrNull() ?: ""
+                        } else {
+                            throw RuntimeException("ConnectionError: Failed to connect to $host:$port (${result.exceptionOrNull()?.message})")
+                        }
+                        PyValue.NoneVal
+                    }
+
+                    sockObj.fields["send"] = PyValue.BuiltinFuncVal("send") { sArgs, _, _ ->
+                        if (socketId.isEmpty()) throw RuntimeException("SocketError: Socket is not connected")
+                        val dataBytes = when (val item = sArgs.getOrNull(0)) {
+                            is PyValue.BytesVal -> item.data
+                            is PyValue.StringVal -> item.value.toByteArray(Charsets.UTF_8)
+                            else -> ByteArray(0)
+                        }
+                        val result = c.socketManager.sendBytes(socketId, dataBytes)
+                        if (result.isSuccess) {
+                            PyValue.IntVal(result.getOrDefault(0).toLong())
+                        } else {
+                            throw RuntimeException("SocketError: Failed to send data (${result.exceptionOrNull()?.message})")
+                        }
+                    }
+
+                    sockObj.fields["sendall"] = sockObj.fields["send"]!!
+
+                    sockObj.fields["recv"] = PyValue.BuiltinFuncVal("recv") { rArgs, _, _ ->
+                        if (socketId.isEmpty()) throw RuntimeException("SocketError: Socket is not connected")
+                        val maxBytes = (rArgs.getOrNull(0) as? PyValue.IntVal)?.value?.toInt() ?: 1024
+                        val result = c.socketManager.receiveBytes(socketId, maxBytes, timeoutMs)
+                        if (result.isSuccess) {
+                            PyValue.BytesVal(result.getOrDefault(ByteArray(0)))
+                        } else {
+                            throw RuntimeException("SocketError: Failed to receive data (${result.exceptionOrNull()?.message})")
+                        }
+                    }
+
+                    sockObj.fields["close"] = PyValue.BuiltinFuncVal("close") { _, _, _ ->
+                        if (socketId.isNotEmpty()) {
+                            c.socketManager.closeSocket(socketId)
+                            socketId = ""
+                        }
+                        PyValue.NoneVal
+                    }
+
+                    sockObj
+                }
+                module.members["socket"] = socketFactory
+            }
+
+            "struct" -> {
+                module.members["pack"] = PyValue.BuiltinFuncVal("pack") { args, _, _ ->
+                    val fmt = (args.getOrNull(0) as? PyValue.StringVal)?.value ?: ""
+                    val packArgs = if (args.size > 1) args.subList(1, args.size) else emptyList()
+                    val packed = PyStruct.pack(fmt, packArgs)
+                    PyValue.BytesVal(packed)
+                }
+
+                module.members["unpack"] = PyValue.BuiltinFuncVal("unpack") { args, _, _ ->
+                    val fmt = (args.getOrNull(0) as? PyValue.StringVal)?.value ?: ""
+                    val data = when (val item = args.getOrNull(1)) {
+                        is PyValue.BytesVal -> item.data
+                        is PyValue.StringVal -> item.value.toByteArray(Charsets.UTF_8)
+                        else -> ByteArray(0)
+                    }
+                    val unpacked = PyStruct.unpack(fmt, data)
+                    PyValue.TupleVal(unpacked)
+                }
+
+                module.members["calcsize"] = PyValue.BuiltinFuncVal("calcsize") { args, _, _ ->
+                    val fmt = (args.getOrNull(0) as? PyValue.StringVal)?.value ?: ""
+                    PyValue.IntVal(PyStruct.calcsize(fmt).toLong())
+                }
+            }
+
+            "binascii" -> {
+                module.members["hexlify"] = PyValue.BuiltinFuncVal("hexlify") { args, _, _ ->
+                    val data = when (val item = args.getOrNull(0)) {
+                        is PyValue.BytesVal -> item.data
+                        is PyValue.StringVal -> item.value.toByteArray(Charsets.UTF_8)
+                        else -> ByteArray(0)
+                    }
+                    val hex = data.joinToString("") { "%02x".format(it) }
+                    PyValue.BytesVal(hex.toByteArray(Charsets.US_ASCII))
+                }
+                module.members["b2a_hex"] = module.members["hexlify"]!!
+
+                module.members["unhexlify"] = PyValue.BuiltinFuncVal("unhexlify") { args, _, _ ->
+                    val hex = when (val item = args.getOrNull(0)) {
+                        is PyValue.StringVal -> item.value
+                        is PyValue.BytesVal -> String(item.data, Charsets.US_ASCII)
+                        else -> ""
+                    }.trim()
+                    val bytes = hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                    PyValue.BytesVal(bytes)
+                }
+                module.members["a2b_hex"] = module.members["unhexlify"]!!
+
+                module.members["crc32"] = PyValue.BuiltinFuncVal("crc32") { args, _, _ ->
+                    val data = when (val item = args.getOrNull(0)) {
+                        is PyValue.BytesVal -> item.data
+                        is PyValue.StringVal -> item.value.toByteArray(Charsets.UTF_8)
+                        else -> ByteArray(0)
+                    }
+                    val crc = java.util.zip.CRC32()
+                    crc.update(data)
+                    PyValue.IntVal(crc.value)
+                }
+            }
+
+            "pysolarmanv5" -> {
+                val solarmanClass = PyValue.BuiltinFuncVal("PySolarmanV5") { args, kwargs, c ->
+                    val address = (kwargs["address"] as? PyValue.StringVal)?.value
+                        ?: (args.getOrNull(0) as? PyValue.StringVal)?.value ?: "192.168.1.100"
+                    val serial = (kwargs["serial"] as? PyValue.IntVal)?.value?.toInt()
+                        ?: (args.getOrNull(1) as? PyValue.IntVal)?.value?.toInt() ?: 123456789
+                    val port = (kwargs["port"] as? PyValue.IntVal)?.value?.toInt()
+                        ?: (args.getOrNull(2) as? PyValue.IntVal)?.value?.toInt() ?: 8899
+                    val slaveId = (kwargs["mb_slave_id"] as? PyValue.IntVal)?.value?.toInt()
+                        ?: (args.getOrNull(3) as? PyValue.IntVal)?.value?.toInt() ?: 1
+
+                    val clientObj = PyValue.InstanceVal(PyValue.ClassVal("PySolarmanV5"))
+                    clientObj.fields["address"] = PyValue.StringVal(address)
+                    clientObj.fields["serial"] = PyValue.IntVal(serial.toLong())
+                    clientObj.fields["port"] = PyValue.IntVal(port.toLong())
+                    clientObj.fields["mb_slave_id"] = PyValue.IntVal(slaveId.toLong())
+
+                    var socketId = ""
+
+                    clientObj.fields["read_holding_registers"] = PyValue.BuiltinFuncVal("read_holding_registers") { rArgs, _, _ ->
+                        val startAddr = (rArgs.getOrNull(0) as? PyValue.IntVal)?.value?.toInt() ?: 0
+                        val quantity = (rArgs.getOrNull(1) as? PyValue.IntVal)?.value?.toInt() ?: 1
+
+                        if (socketId.isEmpty()) {
+                            val res = c.socketManager.openSocket(address, port, 5000)
+                            if (res.isSuccess) {
+                                socketId = res.getOrNull() ?: ""
+                            } else {
+                                throw RuntimeException("PySolarmanV5: Connection to $address:$port failed (${res.exceptionOrNull()?.message})")
+                            }
+                        }
+
+                        // Build Modbus RTU Read Holding Registers frame (Func 0x03)
+                        val pdu = ByteArray(6)
+                        pdu[0] = slaveId.toByte()
+                        pdu[1] = 0x03 // Func
+                        pdu[2] = (startAddr shr 8).toByte()
+                        pdu[3] = (startAddr and 0xFF).toByte()
+                        pdu[4] = (quantity shr 8).toByte()
+                        pdu[5] = (quantity and 0xFF).toByte()
+                        val crc = PyStruct.crc16Modbus(pdu)
+                        val modbusFrame = pdu + byteArrayOf((crc and 0xFF).toByte(), (crc shr 8).toByte())
+
+                        // Solarman V5 frame encapsulation
+                        val payloadLen = modbusFrame.size
+                        val frameLen = 13 + payloadLen + 2
+                        val v5Header = ByteArray(13)
+                        v5Header[0] = 0xA5.toByte() // Start
+                        v5Header[1] = (payloadLen and 0xFF).toByte()
+                        v5Header[2] = (payloadLen shr 8).toByte()
+                        v5Header[3] = 0x10.toByte() // Control Code
+                        v5Header[4] = 0x45.toByte()
+                        v5Header[5] = 0x00.toByte()
+                        // Serial number (4 bytes little-endian)
+                        v5Header[7] = (serial and 0xFF).toByte()
+                        v5Header[8] = ((serial shr 8) and 0xFF).toByte()
+                        v5Header[9] = ((serial shr 16) and 0xFF).toByte()
+                        v5Header[10] = ((serial shr 24) and 0xFF).toByte()
+
+                        val fullFrame = v5Header + modbusFrame + byteArrayOf(0x00.toByte(), 0x15.toByte())
+                        c.socketManager.sendBytes(socketId, fullFrame)
+                        val respBytes = c.socketManager.receiveBytes(socketId, 1024, 5000).getOrDefault(ByteArray(0))
+
+                        // Parse response or generate structured values
+                        val regList = mutableListOf<PyValue>()
+                        if (respBytes.size >= 14) {
+                            // Extract Modbus response registers
+                            val dataStart = 14
+                            for (q in 0 until quantity) {
+                                val offset = dataStart + (q * 2)
+                                if (offset + 1 < respBytes.size) {
+                                    val high = respBytes[offset].toInt() and 0xFF
+                                    val low = respBytes[offset + 1].toInt() and 0xFF
+                                    val val16 = (high shl 8) or low
+                                    regList.add(PyValue.IntVal(val16.toLong()))
+                                } else {
+                                    regList.add(PyValue.IntVal(0))
+                                }
+                            }
+                        } else {
+                            for (q in 0 until quantity) regList.add(PyValue.IntVal(0))
+                        }
+                        PyValue.ListVal(regList)
+                    }
+
+                    clientObj.fields["disconnect"] = PyValue.BuiltinFuncVal("disconnect") { _, _, _ ->
+                        if (socketId.isNotEmpty()) {
+                            c.socketManager.closeSocket(socketId)
+                            socketId = ""
+                        }
+                        PyValue.NoneVal
+                    }
+
+                    clientObj
+                }
+                module.members["PySolarmanV5"] = solarmanClass
             }
         }
         return module
