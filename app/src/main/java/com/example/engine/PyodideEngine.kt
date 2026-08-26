@@ -131,6 +131,122 @@ class PyodideEngine(
 import sys
 import js
 import json
+import types
+import io
+import time
+
+# Socket constants
+AF_UNSPEC = 0
+AF_UNIX = 1
+AF_INET = 2
+AF_INET6 = 10
+
+SOCK_STREAM = 1
+SOCK_DGRAM = 2
+SOCK_RAW = 3
+SOCK_RDM = 4
+SOCK_SEQPACKET = 5
+
+SOL_SOCKET = 1
+SOL_IP = 0
+SOL_TCP = 6
+SOL_UDP = 17
+
+SO_DEBUG = 1
+SO_REUSEADDR = 2
+SO_TYPE = 3
+SO_ERROR = 4
+SO_DONTROUTE = 5
+SO_BROADCAST = 6
+SO_SNDBUF = 7
+SO_RCVBUF = 8
+SO_KEEPALIVE = 9
+SO_OOBINLINE = 10
+SO_RCVTIMEO = 20
+SO_SNDTIMEO = 21
+
+IPPROTO_IP = 0
+IPPROTO_ICMP = 1
+IPPROTO_TCP = 6
+IPPROTO_UDP = 17
+IPPROTO_RAW = 255
+IPPROTO_IPV6 = 41
+
+TCP_NODELAY = 1
+
+SHUT_RD = 0
+SHUT_WR = 1
+SHUT_RDWR = 2
+
+INADDR_ANY = "0.0.0.0"
+INADDR_BROADCAST = "255.255.255.255"
+INADDR_NONE = "255.255.255.255"
+INADDR_LOOPBACK = "127.0.0.1"
+
+has_ipv6 = True
+
+# Exceptions
+error = OSError
+herror = OSError
+gaierror = OSError
+timeout = TimeoutError
+
+def gethostname():
+    return "localhost"
+
+def gethostbyname(hostname):
+    return str(hostname)
+
+def gethostbyname_ex(hostname):
+    return (str(hostname), [], [str(hostname)])
+
+def getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    f = family if family != 0 else AF_INET
+    t = type if type != 0 else SOCK_STREAM
+    p = proto if proto != 0 else (IPPROTO_TCP if t == SOCK_STREAM else IPPROTO_UDP)
+    return [(f, t, p, "", (str(host), int(port) if port else 0))]
+
+def getnameinfo(sockaddr, flags=0):
+    return (str(sockaddr[0]), str(sockaddr[1]))
+
+def inet_aton(ip_string):
+    parts = [int(p) for p in str(ip_string).split('.')]
+    return bytes(parts)
+
+def inet_ntoa(packed_ip):
+    return '.'.join(str(b) for b in packed_ip)
+
+def htons(x): return x
+def htonl(x): return x
+def ntohs(x): return x
+def ntohl(x): return x
+
+class SocketIO(io.RawIOBase):
+    def __init__(self, sock, mode):
+        self._sock = sock
+        self._mode = mode
+        super().__init__()
+
+    def readinto(self, b):
+        data = self._sock.recv(len(b))
+        n = len(data)
+        b[:n] = data
+        return n
+
+    def write(self, b):
+        return self._sock.send(b)
+
+    def readable(self):
+        return 'r' in self._mode or '+' in self._mode
+
+    def writable(self):
+        return 'w' in self._mode or '+' in self._mode or 'a' in self._mode
+
+    def seekable(self):
+        return False
+
+    def close(self):
+        super().close()
 
 # Custom Android Network Socket Bridge
 class AndroidSocket:
@@ -141,51 +257,162 @@ class AndroidSocket:
     def __init__(self, family=2, type=1, proto=0, fileno=None):
         self.family = family
         self.type = type
+        self.proto = proto
         self.socket_id = None
         self.timeout_ms = 5000
+        self._closed = False
+        self._connected = False
+        self._bound_addr = None
 
     def connect(self, address):
         host, port = address
         self.socket_id = js.AndroidBridge.openSocketSync(str(host), int(port), int(self.timeout_ms))
         if not self.socket_id or self.socket_id == "":
             raise ConnectionError(f"Verbindung zu {host}:{port} fehlgeschlagen.")
+        self._connected = True
 
-    def settimeout(self, timeout):
-        if timeout is not None:
-            self.timeout_ms = int(timeout * 1000)
+    def connect_ex(self, address):
+        try:
+            self.connect(address)
+            return 0
+        except Exception:
+            return 111
+
+    def settimeout(self, timeout_sec):
+        if timeout_sec is not None:
+            self.timeout_ms = int(timeout_sec * 1000)
+        else:
+            self.timeout_ms = 10000
+
+    def gettimeout(self):
+        return self.timeout_ms / 1000.0
+
+    def setblocking(self, flag):
+        pass
+
+    def setsockopt(self, level, optname, value):
+        pass
+
+    def getsockopt(self, level, optname, buflen=None):
+        return 0
+
+    def bind(self, address):
+        self._bound_addr = address
+
+    def listen(self, backlog=5):
+        pass
+
+    def accept(self):
+        return (self, self._bound_addr or ("127.0.0.1", 8080))
 
     def send(self, data):
-        if isinstance(data, (bytes, bytearray)):
-            hex_data = data.hex()
+        if isinstance(data, (bytes, bytearray, memoryview)):
+            hex_data = bytes(data).hex()
         elif isinstance(data, str):
             hex_data = data.encode('utf-8').hex()
         else:
             hex_data = ""
-        sent = js.AndroidBridge.sendHexSync(self.socket_id, hex_data)
+        sent = js.AndroidBridge.sendHexSync(str(self.socket_id), hex_data)
         return int(sent)
 
     def sendall(self, data):
         return self.send(data)
 
+    def sendto(self, data, address):
+        if not self.socket_id:
+            self.connect(address)
+        return self.send(data)
+
     def recv(self, bufsize=1024):
-        hex_resp = js.AndroidBridge.recvHexSync(self.socket_id, int(bufsize), int(self.timeout_ms))
+        if not self.socket_id:
+            return b""
+        hex_resp = js.AndroidBridge.recvHexSync(str(self.socket_id), int(bufsize), int(self.timeout_ms))
         if not hex_resp:
             return b""
         return bytes.fromhex(str(hex_resp))
 
+    def recv_into(self, buffer, nbytes=0):
+        target_size = nbytes if nbytes > 0 else len(buffer)
+        data = self.recv(target_size)
+        n = len(data)
+        buffer[:n] = data
+        return n
+
+    def recvfrom(self, bufsize=1024):
+        data = self.recv(bufsize)
+        return (data, ("127.0.0.1", 0))
+
     def close(self):
         if self.socket_id:
-            js.AndroidBridge.closeSocketSync(self.socket_id)
+            js.AndroidBridge.closeSocketSync(str(self.socket_id))
             self.socket_id = None
+        self._closed = True
+        self._connected = False
 
-# Expose socket class in global sys modules if needed
-import types
-android_socket_mod = types.ModuleType("socket")
-android_socket_mod.AF_INET = 2
-android_socket_mod.SOCK_STREAM = 1
-android_socket_mod.socket = AndroidSocket
-sys.modules["_android_socket"] = android_socket_mod
-sys.modules["socket"] = android_socket_mod
+    def shutdown(self, how=SHUT_RDWR):
+        self.close()
+
+    def fileno(self):
+        return 100
+
+    def dup(self):
+        return self
+
+    def makefile(self, mode="r", buffering=None, encoding=None, errors=None, newline=None):
+        raw = SocketIO(self, mode)
+        if "b" in mode:
+            return raw
+        return io.TextIOWrapper(raw, encoding=encoding or "utf-8", errors=errors, newline=newline)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+def create_connection(address, timeout=10.0, source_address=None):
+    s = AndroidSocket(AF_INET, SOCK_STREAM)
+    if timeout is not None:
+        s.settimeout(timeout)
+    s.connect(address)
+    return s
+
+socket_module = types.ModuleType("socket")
+_socket_module = types.ModuleType("_socket")
+
+attrs = {
+    "AF_UNSPEC": AF_UNSPEC, "AF_UNIX": AF_UNIX, "AF_INET": AF_INET, "AF_INET6": AF_INET6,
+    "SOCK_STREAM": SOCK_STREAM, "SOCK_DGRAM": SOCK_DGRAM, "SOCK_RAW": SOCK_RAW,
+    "SOCK_RDM": SOCK_RDM, "SOCK_SEQPACKET": SOCK_SEQPACKET,
+    "SOL_SOCKET": SOL_SOCKET, "SOL_IP": SOL_IP, "SOL_TCP": SOL_TCP, "SOL_UDP": SOL_UDP,
+    "SO_DEBUG": SO_DEBUG, "SO_REUSEADDR": SO_REUSEADDR, "SO_TYPE": SO_TYPE, "SO_ERROR": SO_ERROR,
+    "SO_DONTROUTE": SO_DONTROUTE, "SO_BROADCAST": SO_BROADCAST, "SO_SNDBUF": SO_SNDBUF,
+    "SO_RCVBUF": SO_RCVBUF, "SO_KEEPALIVE": SO_KEEPALIVE, "SO_OOBINLINE": SO_OOBINLINE,
+    "SO_RCVTIMEO": SO_RCVTIMEO, "SO_SNDTIMEO": SO_SNDTIMEO,
+    "IPPROTO_IP": IPPROTO_IP, "IPPROTO_ICMP": IPPROTO_ICMP, "IPPROTO_TCP": IPPROTO_TCP,
+    "IPPROTO_UDP": IPPROTO_UDP, "IPPROTO_RAW": IPPROTO_RAW, "IPPROTO_IPV6": IPPROTO_IPV6,
+    "TCP_NODELAY": TCP_NODELAY,
+    "SHUT_RD": SHUT_RD, "SHUT_WR": SHUT_WR, "SHUT_RDWR": SHUT_RDWR,
+    "INADDR_ANY": INADDR_ANY, "INADDR_BROADCAST": INADDR_BROADCAST,
+    "INADDR_NONE": INADDR_NONE, "INADDR_LOOPBACK": INADDR_LOOPBACK,
+    "has_ipv6": True,
+    "error": error, "herror": herror, "gaierror": gaierror, "timeout": timeout,
+    "gethostname": gethostname, "gethostbyname": gethostbyname, "gethostbyname_ex": gethostbyname_ex,
+    "getaddrinfo": getaddrinfo, "getnameinfo": getnameinfo,
+    "inet_aton": inet_aton, "inet_ntoa": inet_ntoa,
+    "htons": htons, "htonl": htonl, "ntohs": ntohs, "ntohl": ntohl,
+    "socket": AndroidSocket, "SocketType": AndroidSocket,
+    "create_connection": create_connection, "SocketIO": SocketIO,
+    "_GLOBAL_DEFAULT_TIMEOUT": object()
+}
+
+for k, v in attrs.items():
+    setattr(socket_module, k, v)
+    setattr(_socket_module, k, v)
+
+sys.modules["_socket"] = _socket_module
+sys.modules["socket"] = socket_module
             `);
 
             window.AndroidBridge.onPipLog("✅ Python 3.11 Engine & Pip einsatzbereit!");
@@ -197,18 +424,18 @@ sys.modules["socket"] = android_socket_mod
 
     async function runPythonCode(code, execId) {
         if (!pyodide) {
-            window.AndroidBridge.onExecResult(execId, false, "", "Engine not ready");
+            window.AndroidBridge.onExecFailure(execId, "Engine nicht bereit", 0);
             return;
         }
         const t0 = performance.now();
         try {
             const result = await pyodide.runPythonAsync(code);
             const duration = Math.round(performance.now() - t0);
-            const resStr = result !== undefined && result !== null ? result.toString() : "";
-            window.AndroidBridge.onExecResult(execId, true, resStr, duration);
+            const resStr = (result !== undefined && result !== null) ? String(result) : "";
+            window.AndroidBridge.onExecSuccess(execId, resStr, duration);
         } catch (err) {
             const duration = Math.round(performance.now() - t0);
-            window.AndroidBridge.onExecResult(execId, false, "", err.toString(), duration);
+            window.AndroidBridge.onExecFailure(execId, err.toString(), duration);
         }
     }
 
@@ -320,7 +547,38 @@ json.dumps(res)
         }
 
         @JavascriptInterface
-        fun onExecResult(execId: String, success: Boolean, output: String, durationOrError: String, durationMs: Long = 0) {
+        fun onExecSuccess(execId: String, output: String, durationMs: Long) {
+            scope.launch(Dispatchers.Main) {
+                _engineState.value = EngineState.READY
+                currentExecutionDeferred?.complete(
+                    PyExecutionResult(
+                        success = true,
+                        output = output,
+                        durationMs = durationMs
+                    )
+                )
+                currentExecutionDeferred = null
+            }
+        }
+
+        @JavascriptInterface
+        fun onExecFailure(execId: String, error: String, durationMs: Long) {
+            scope.launch(Dispatchers.Main) {
+                _engineState.value = EngineState.READY
+                currentExecutionDeferred?.complete(
+                    PyExecutionResult(
+                        success = false,
+                        output = "",
+                        error = error,
+                        durationMs = durationMs
+                    )
+                )
+                currentExecutionDeferred = null
+            }
+        }
+
+        @JavascriptInterface
+        fun onExecResult(execId: String, success: Boolean, output: String, durationOrError: String) {
             scope.launch(Dispatchers.Main) {
                 _engineState.value = EngineState.READY
                 if (success) {
@@ -328,7 +586,7 @@ json.dumps(res)
                         PyExecutionResult(
                             success = true,
                             output = output,
-                            durationMs = durationOrError.toLongOrNull() ?: durationMs
+                            durationMs = durationOrError.toLongOrNull() ?: 0L
                         )
                     )
                 } else {
@@ -337,7 +595,7 @@ json.dumps(res)
                             success = false,
                             output = output,
                             error = durationOrError,
-                            durationMs = durationMs
+                            durationMs = 0L
                         )
                     )
                 }

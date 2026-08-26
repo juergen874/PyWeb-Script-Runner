@@ -31,10 +31,6 @@ enum class AppTab {
     EDITOR, TERMINAL, WEB_UI, PACKAGES, SCRIPTS
 }
 
-enum class EngineMode {
-    AUTO, PYODIDE, NATIVE
-}
-
 enum class TerminalLineType {
     STDOUT, STDERR, STDIN, SYSTEM, PROMPT, REPL_IN, REPL_OUT
 }
@@ -72,7 +68,6 @@ data class UiState(
     val scripts: List<ScriptEntity> = emptyList(),
     val snackbarMessage: String? = null,
     val isAutoSwitchToWeb: Boolean = true,
-    val engineMode: EngineMode = EngineMode.AUTO,
     val pipSearchQuery: String = "",
     val isInstallingPip: Boolean = false
 )
@@ -86,7 +81,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var executionJob: Job? = null
     private var inputContinuation: Continuation<String>? = null
-    private var activeContext: PyContext? = null
 
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
@@ -137,7 +131,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         // Initial welcome terminal lines
-        addTerminalLine("🐍 Python 3.11.4 Embedded Environment bereit", TerminalLineType.SYSTEM)
+        addTerminalLine("🐍 Python 3.11 CPython (Pyodide WebAssembly) & Pip aktiv", TerminalLineType.SYSTEM)
         addTerminalLine("🌐 Localhost Web Server läuft auf http://127.0.0.1:8080", TerminalLineType.SYSTEM)
         addTerminalLine("Tippe auf 'Ausführen' (▶) oder wechsle zu 'Web UI' für die Live-Vorschau.\n", TerminalLineType.SYSTEM)
     }
@@ -196,101 +190,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         addTerminalLine("─── ▶ Führe Skript aus: '${_uiState.value.scriptTitle}' ───", TerminalLineType.SYSTEM)
         _uiState.update { it.copy(isRunning = true) }
 
-        var launchedWebServer = false
-
-        val serverCallback = object : PyServerCallback {
-            override fun serveHtml(html: String, port: Int) {
-                launchedWebServer = true
-                localServer.setHtml(html)
-                localServer.start(port)
-                _uiState.update {
-                    it.copy(
-                        serverState = it.serverState.copy(
-                            isRunning = true,
-                            url = "http://127.0.0.1:$port",
-                            port = port,
-                            refreshCounter = it.serverState.refreshCounter + 1
-                        )
-                    )
-                }
-            }
-
-            override fun registerRoute(
-                path: String,
-                method: String,
-                handler: suspend (params: Map<String, String>, body: String) -> String
-            ) {
-                launchedWebServer = true
-                localServer.registerRoute(path, handler)
-                _uiState.update {
-                    it.copy(
-                        serverState = it.serverState.copy(
-                            registeredRoutes = localServer.getRegisteredRoutes(),
-                            refreshCounter = it.serverState.refreshCounter + 1
-                        )
-                    )
-                }
-            }
-
-            override fun startServer(port: Int) {
-                launchedWebServer = true
-                localServer.start(port)
-                _uiState.update {
-                    it.copy(
-                        serverState = it.serverState.copy(
-                            isRunning = true,
-                            url = "http://127.0.0.1:$port",
-                            port = port,
-                            refreshCounter = it.serverState.refreshCounter + 1
-                        )
-                    )
-                }
-            }
-
-            override fun stopServer() {
-                localServer.stop()
-                _uiState.update {
-                    it.copy(serverState = it.serverState.copy(isRunning = false))
-                }
-            }
-
-            override fun getServerPort(): Int = localServer.currentPort
-            override fun isServerRunning(): Boolean = localServer.isRunning()
-        }
-
-        val ctx = PyContext(
-            onStdout = { text -> addTerminalLine(text, TerminalLineType.STDOUT) },
-            onStderr = { text -> addTerminalLine(text, TerminalLineType.STDERR) },
-            onInputRequest = { prompt ->
-                suspendCoroutine { cont ->
-                    inputContinuation = cont
-                    _uiState.update {
-                        it.copy(
-                            isWaitingForInput = true,
-                            inputPrompt = prompt,
-                            currentTab = AppTab.TERMINAL
-                        )
-                    }
-                }
-            },
-            serverCallback = serverCallback
-        )
-        activeContext = ctx
+        val launchedWebServer = codeToRun.contains("import web") ||
+                codeToRun.contains("web.serve") ||
+                codeToRun.contains("http.server") ||
+                codeToRun.contains("HTTPServer")
 
         executionJob = viewModelScope.launch(Dispatchers.Default) {
             val startTime = System.currentTimeMillis()
-            val mode = _uiState.value.engineMode
-            val usePyodide = when (mode) {
-                EngineMode.PYODIDE -> true
-                EngineMode.NATIVE -> false
-                EngineMode.AUTO -> pyodideEngine.engineState.value == EngineState.READY &&
-                        (codeToRun.contains("micropip") || codeToRun.contains("numpy") || codeToRun.contains("requests") || codeToRun.contains("pandas") || codeToRun.contains("matplotlib"))
+
+            if (pyodideEngine.engineState.value != EngineState.READY) {
+                withContext(Dispatchers.Main) {
+                    addTerminalLine("⏳ Initialisiere Pyodide CPython 3.11 Runtime...\n", TerminalLineType.SYSTEM)
+                }
+                var waited = 0
+                while (pyodideEngine.engineState.value != EngineState.READY && waited < 40) {
+                    delay(250)
+                    waited++
+                }
             }
 
-            if (usePyodide && pyodideEngine.engineState.value == EngineState.READY) {
+            if (pyodideEngine.engineState.value != EngineState.READY) {
                 withContext(Dispatchers.Main) {
-                    addTerminalLine("🚀 Starte Ausführung in Pyodide CPython 3.11 Engine...\n", TerminalLineType.SYSTEM)
+                    addTerminalLine("❌ Pyodide Engine konnte nicht geladen werden.\n", TerminalLineType.STDERR)
+                    _uiState.update { it.copy(isRunning = false) }
                 }
+                return@launch
+            }
+
+            withContext(Dispatchers.Main) {
+                addTerminalLine("🚀 Ausführung in Pyodide CPython 3.11 Engine...\n", TerminalLineType.SYSTEM)
+            }
+
+            try {
                 val res = pyodideEngine.executeCode(
                     code = codeToRun,
                     onStdout = { text -> addTerminalLine(text, TerminalLineType.STDOUT) },
@@ -312,28 +243,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _uiState.update { it.copy(currentTab = AppTab.WEB_UI) }
                     }
                 }
-                return@launch
-            }
-
-            try {
-                val lexer = PyLexer(codeToRun)
-                val tokens = lexer.tokenize()
-                val parser = PyParser(tokens)
-                val statements = parser.parse()
-
-                val interpreter = PyInterpreter(ctx)
-                interpreter.execute(statements)
-
-                val duration = System.currentTimeMillis() - startTime
-                withContext(Dispatchers.Main) {
-                    addTerminalLine("✔ Skript erfolgreich beendet in ${duration}ms\n", TerminalLineType.SYSTEM)
-                    _uiState.update { it.copy(isRunning = false, isWaitingForInput = false) }
-
-                    // If a web server/UI was served and user prefers, switch to Web UI tab
-                    if (launchedWebServer && _uiState.value.isAutoSwitchToWeb) {
-                        _uiState.update { it.copy(currentTab = AppTab.WEB_UI) }
-                    }
-                }
             } catch (ce: CancellationException) {
                 withContext(Dispatchers.Main) {
                     addTerminalLine("⏹ Ausführung abgebrochen.", TerminalLineType.SYSTEM)
@@ -349,16 +258,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-    }
-
-    fun setEngineMode(mode: EngineMode) {
-        _uiState.update { it.copy(engineMode = mode) }
-        val modeName = when (mode) {
-            EngineMode.AUTO -> "Auto (Empfohlen)"
-            EngineMode.PYODIDE -> "Pyodide WebAssembly (CPython 3.11 + Pip)"
-            EngineMode.NATIVE -> "Nativ (Integrierte Kotlin VM)"
-        }
-        addTerminalLine("⚙️ Engine-Modus gewechselt zu: $modeName\n", TerminalLineType.SYSTEM)
     }
 
     fun setPipSearchQuery(query: String) {
@@ -396,7 +295,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopExecution() {
-        activeContext?.isCancelled = true
         executionJob?.cancel()
         inputContinuation?.resume("")
         inputContinuation = null
@@ -440,31 +338,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         viewModelScope.launch(Dispatchers.Default) {
+            if (pyodideEngine.engineState.value != EngineState.READY) {
+                withContext(Dispatchers.Main) {
+                    addTerminalLine("⏳ Pyodide Engine lädt noch...\n", TerminalLineType.SYSTEM)
+                }
+                var waited = 0
+                while (pyodideEngine.engineState.value != EngineState.READY && waited < 40) {
+                    delay(250)
+                    waited++
+                }
+            }
+
             try {
-                val ctx = activeContext ?: PyContext(
+                val res = pyodideEngine.executeCode(
+                    code = command,
                     onStdout = { text -> addTerminalLine(text, TerminalLineType.STDOUT) },
-                    onStderr = { text -> addTerminalLine(text, TerminalLineType.STDERR) },
-                    onInputRequest = { "" }
-                ).also { activeContext = it }
-
-                val lexer = PyLexer(command)
-                val tokens = lexer.tokenize()
-                val parser = PyParser(tokens)
-
-                // Try parsing as expression first for immediate evaluation
-                val interpreter = PyInterpreter(ctx)
-                try {
-                    val expr = PyParser(tokens).parseExpression()
-                    val result = interpreter.evaluate(expr)
-                    if (result !is PyValue.NoneVal) {
-                        withContext(Dispatchers.Main) {
-                            addTerminalLine(result.toDisplayString(), TerminalLineType.REPL_OUT)
+                    onStderr = { text -> addTerminalLine(text, TerminalLineType.STDERR) }
+                )
+                withContext(Dispatchers.Main) {
+                    if (res.success) {
+                        if (res.output.isNotEmpty() && res.output != "None") {
+                            addTerminalLine("${res.output}\n", TerminalLineType.REPL_OUT)
                         }
+                    } else {
+                        addTerminalLine("❌ ${res.error}\n", TerminalLineType.STDERR)
                     }
-                } catch (e: Exception) {
-                    // Otherwise parse as statement
-                    val stmts = parser.parse()
-                    interpreter.execute(stmts)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
@@ -766,18 +664,19 @@ print("Hallo aus PyRunner!")
         val sdf = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
         val timestamp = sdf.format(Date())
 
-        // If text contains newlines, we can either split or keep
-        val cleanText = text.trimEnd('\n')
-        if (cleanText.isEmpty()) return
+        val trimmed = text.trimEnd('\n', '\r')
+        if (trimmed.isEmpty()) return
 
-        val line = TerminalLine(
-            text = cleanText,
-            type = type,
-            timestamp = timestamp
-        )
+        val linesToAdd = trimmed.split("\n").map { lineText ->
+            TerminalLine(
+                text = lineText.trimEnd('\r'),
+                type = type,
+                timestamp = timestamp
+            )
+        }
 
         _uiState.update {
-            val updated = (it.terminalLines + line).takeLast(500)
+            val updated = (it.terminalLines + linesToAdd).takeLast(600)
             it.copy(terminalLines = updated)
         }
     }

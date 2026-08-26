@@ -399,6 +399,10 @@ fun TerminalLineItem(line: TerminalLine, fontSize: Int) {
         TerminalLineType.REPL_OUT -> Pair(TermGreen, "=> ")
     }
 
+    val formattedText = remember(line.text, prefix, textColor) {
+        AnsiFormatter.formatAnsi("$prefix${line.text}", textColor)
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -406,10 +410,9 @@ fun TerminalLineItem(line: TerminalLine, fontSize: Int) {
         verticalAlignment = Alignment.Top
     ) {
         Text(
-            text = "$prefix${line.text}",
+            text = formattedText,
             fontFamily = FontFamily.Monospace,
             fontSize = fontSize.sp,
-            color = textColor,
             lineHeight = (fontSize + 6).sp,
             modifier = Modifier.fillMaxWidth()
         )

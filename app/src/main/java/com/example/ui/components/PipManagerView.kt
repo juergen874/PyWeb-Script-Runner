@@ -21,7 +21,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.engine.EngineState
 import com.example.engine.InstalledPackage
-import com.example.ui.EngineMode
 import com.example.ui.MainViewModel
 import com.example.ui.UiState
 import com.example.ui.theme.*
@@ -120,40 +119,12 @@ fun PipManagerView(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = "Wähle die bevorzugte Python-Ausführungsumgebung:",
+                        text = "Vollständige CPython 3.11 Runtime auf Basis von WebAssembly mit micropip Paketverwaltung, Modbus, Sockets und PyPI-Unterstützung.",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        EngineMode.values().forEach { mode ->
-                            val isSelected = uiState.engineMode == mode
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = { viewModel.setEngineMode(mode) },
-                                label = {
-                                    Text(
-                                        when (mode) {
-                                            EngineMode.AUTO -> "Auto"
-                                            EngineMode.PYODIDE -> "Pyodide (Pip)"
-                                            EngineMode.NATIVE -> "Nativ (Schnell)"
-                                        },
-                                        fontSize = 12.sp
-                                    )
-                                },
-                                leadingIcon = if (isSelected) {
-                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                                } else null,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                    }
                 }
             }
         }
