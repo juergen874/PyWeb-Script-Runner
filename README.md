@@ -2,6 +2,7 @@
 
 [![Latest Release](https://img.shields.io/github/v/release/juergen874/PyWeb-Script-Runner?style=for-the-badge&logo=github&color=blue)](https://github.com/juergen874/PyWeb-Script-Runner/releases/latest)
 [![Download APK](https://img.shields.io/badge/Download-APK%20(v1.0.0)-success?style=for-the-badge&logo=android&logoColor=white)](https://github.com/juergen874/PyWeb-Script-Runner/releases/download/v1.0.0/Python.Runner.1.0.apk)
+[![Discussions](https://img.shields.io/badge/GitHub-Discussions%20%2F%20Kommentare-informational?style=for-the-badge&logo=github)](https://github.com/juergen874/PyWeb-Script-Runner/discussions)
 [![Total Downloads](https://img.shields.io/github/downloads/juergen874/PyWeb-Script-Runner/total?style=for-the-badge&logo=github&color=orange)](https://github.com/juergen874/PyWeb-Script-Runner/releases)
 [![Python 3.11](https://img.shields.io/badge/Python-3.11%20(Pyodide)-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://pyodide.org)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0+-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org)
