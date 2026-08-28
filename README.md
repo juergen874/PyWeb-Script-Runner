@@ -1,6 +1,24 @@
 # 🐍 Python Runner (Android)
 
+[![Latest Release](https://img.shields.io/github/v/release/juergen874/PyWeb-Script-Runner?style=for-the-badge&logo=github&color=blue)](https://github.com/juergen874/PyWeb-Script-Runner/releases/latest)
+[![Download APK](https://img.shields.io/badge/Download-APK%20(v1.0.0)-success?style=for-the-badge&logo=android&logoColor=white)](https://github.com/juergen874/PyWeb-Script-Runner/releases/download/v1.0.0/Python.Runner.1.0.apk)
+[![Total Downloads](https://img.shields.io/github/downloads/juergen874/PyWeb-Script-Runner/total?style=for-the-badge&logo=github&color=orange)](https://github.com/juergen874/PyWeb-Script-Runner/releases)
+[![Python 3.11](https://img.shields.io/badge/Python-3.11%20(Pyodide)-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://pyodide.org)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.0+-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
+
 Eine leistungsstarke Android-Anwendung zum **Schreiben, Ausführen und Verwalten von Python-Skripten** mit vollständiger **CPython 3.11 Runtime (Pyodide / WebAssembly)**, **Pip-Paketverwaltung (`micropip`)**, interaktivem **ANSI-Terminal (REPL)**, **nativer Socket-/Netzwerk-Bridge** und einem eingebetteten **Localhost-Webserver (`http://127.0.0.1:8080`)** zur Anzeige dynamischer Web-UIs.
+
+---
+
+## 📥 Direkter Download & APK-Installation
+
+Du musst das Projekt nicht selbst kompilieren – die fertige Android-App steht als **APK-Download** bereit:
+
+* ⬇️ **[Direkter Download: Python.Runner.1.0.apk (v1.0.0)](https://github.com/juergen874/PyWeb-Script-Runner/releases/download/v1.0.0/Python.Runner.1.0.apk)** *(ca. 22 MB)*
+* 📦 **[Alle Versionen & Release Notes ansehen](https://github.com/juergen874/PyWeb-Script-Runner/releases/latest)**
+
+> **Hinweis zur Installation:** Nach dem Herunterladen die APK auf dem Android-Gerät antippen. Falls gefragt, die Installation aus deinem Browser/Dateimanager erlauben (*„Unbekannte Apps installieren“*).
 
 ---
 
@@ -55,7 +73,7 @@ Eine leistungsstarke Android-Anwendung zum **Schreiben, Ausführen und Verwalten
 
 ---
 
-## 🚀 Bauen und Ausführen
+## 🚀 Bauen und Ausführen (Für Entwickler)
 
 ### Voraussetzungen
 - Android Studio Ladybug (oder neuer)
@@ -65,22 +83,22 @@ Eine leistungsstarke Android-Anwendung zum **Schreiben, Ausführen und Verwalten
 ### Installation
 1. Repository klonen:
    ```bash
-   git clone https://github.com/dein-nutzername/python-runner-android.git
-   cd python-runner-android
+   git clone https://github.com/juergen874/PyWeb-Script-Runner.git
+   cd PyWeb-Script-Runner
    ```
 2. Projekt in Android Studio öffnen.
 3. Gradle Sync durchführen.
 4. Auf einem Android-Gerät oder Emulator starten:
    ```bash
-   gradle assembleDebug
+   ./gradlew assembleDebug
    ```
 
 ### Tests ausführen
 ```bash
-gradle :app:testDebugUnitTest
+./gradlew :app:testDebugUnitTest
 ```
 
 ---
 
 ## 📄 Lizenz
-Dieses Projekt ist unter der MIT-Lizenz lizenziert.
+Dieses Projekt ist unter der [MIT-Lizenz](LICENSE) lizenziert.
